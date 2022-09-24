@@ -1,25 +1,41 @@
 // use std::convert::TryInto;
+use anyhow::Result;
+use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
+use aws_sdk_s3::output::CreateMultipartUploadOutput; // GetObjectOutput};
+use rand::Rng;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
-
-// use aws_config::meta::region::RegionProviderChain;
-use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
-use aws_sdk_s3::output::CreateMultipartUploadOutput; // GetObjectOutput};
-use aws_sdk_s3::{Client as S3Client, Error}; // Region};
-use aws_smithy_http::byte_stream::{ByteStream, Length};
-use rand::distributions::Alphanumeric;
-use rand::{thread_rng, Rng};
 use uuid::Uuid;
 
-//In bytes, minimum chunk size of 5MB. Increase CHUNK_SIZE to send larger chunks.
+// In bytes, minimum chunk size of 5MB. Increase CHUNK_SIZE to send larger chunks.
 const CHUNK_SIZE: u64 = 1024 * 1024 * 5;
 const MAX_CHUNKS: u64 = 10000;
 
+async fn _put_object(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    object: &str,
+    expires_in: u64,
+) -> Result<()> {
+    let expires_in = std::time::Duration::from_secs(expires_in);
+
+    let presigned_request = client
+        .put_object()
+        .bucket(bucket)
+        .key(object)
+        .presigned(aws_sdk_s3::presigning::config::PresigningConfig::expires_in(expires_in)?)
+        .await?;
+
+    println!("Object URI: {}", presigned_request.uri());
+
+    Ok(())
+}
+
 #[tokio::main]
-pub async fn main() -> Result<(), Error> {
+pub async fn main() -> Result<()> {
     let shared_config = aws_config::load_from_env().await;
-    let client = S3Client::new(&shared_config);
+    let client = aws_sdk_s3::Client::new(&shared_config);
 
     let bucket_name = format!("doc-example-bucket-{}", Uuid::new_v4());
     // let region_provider = RegionProviderChain::first_try(Region::new("us-west-2"));
@@ -42,8 +58,8 @@ pub async fn main() -> Result<(), Error> {
     let mut file = File::create(&key).expect("Could not create sample file.");
     // Loop until the file is 5 chunks.
     while file.metadata().unwrap().len() <= CHUNK_SIZE * 4 {
-        let rand_string: String = thread_rng()
-            .sample_iter(&Alphanumeric)
+        let rand_string: String = rand::thread_rng()
+            .sample_iter(&rand::distributions::Alphanumeric)
             .take(256)
             .map(char::from)
             .collect();
@@ -82,10 +98,10 @@ pub async fn main() -> Result<(), Error> {
         } else {
             CHUNK_SIZE
         };
-        let stream = ByteStream::read_from()
+        let stream = aws_smithy_http::byte_stream::ByteStream::read_from()
             .path(path)
             .offset(chunk_index * CHUNK_SIZE)
-            .length(Length::Exact(this_chunk))
+            .length(aws_smithy_http::byte_stream::Length::Exact(this_chunk))
             .build()
             .await
             .unwrap();
